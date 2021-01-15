@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Script EMR para NG1-Capital (PoC)
+Parameters:
+  EMRClusterNG1Capital:
+    Description: Cluster EMR para NG1-Capital (PoC)
+    Type: String
+    Default: 'EMR-Cluster-NG1-Capital'
+  SubnetID:
+    Description: Coloque aqui o ID da Subnet que pretende usar (remover o Default) 
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: "A subnet deve ser associada a VPC correspondente"
+    Default: subnet-0199a31603a4acb1d
+  WebAccessSecurityGroup:
+    Description: Coloque aqui o ID do Security Group que pretende usar (remover o Default) 
+    Type: AWS::EC2::SecurityGroup::Id
+    ConstraintDescription: "O security group precisa ter acesso principalmente nas portas TCP ida e volda 80, 22 e 443"
+    Default: sg-0f86a96eaadec5fc0
+  KeyName:
+    Description: Colocar aqui o ID da Chave PPK ou PEM (Gerado na tela da VPC)
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: kp-emr
+  MasterInstanceType:
+    Description: Instancia selecionada do tipo Master
+    Type: String
+    Default: m4.xlarge
+    AllowedValues:
+      - m4.xlarge
+  CoreInstanceType:
+    Description: Instancia selecionada do tipo Core
+    Type: String
+    Default: m4.xlarge
+    AllowedValues:
+      - m4.xlarge
+  ReleaseLabel:
+    Description: Coloque aqui a versao do EMR que deseja usar (emr-5.24.0 = Spark 2.4)
+    Default: emr-5.24.0
+    Type: String
+  TesteDataBucketName:
+    NoEcho: 'false'
+    Type: String
+    Description: Coloque aqui o nome do Bucket
+    Default: bkng1capitalteste
+
+Resources:
+  EMRCluster:
+    DependsOn:
+      - EMRClusterServiceRole
+      - EMRClusterinstanceProfileRole
+      - EMRClusterinstanceProfile
+      - TesteEC2Policy
+    Type: AWS::EMR::Cluster
+    Properties:
+      Applications:
+      # Adicionar informacoes suportadas de EMR applications AQUI
+        - Name: Spark
+        - Name: Pig
+      Instances:
+        Ec2KeyName: !Ref 'KeyName'
+        Ec2SubnetId: !Ref 'SubnetID'
+        MasterInstanceGroup:
+          InstanceCount: 3
+          InstanceType: !Ref 'MasterInstanceType'
+          Market: ON_DEMAND
+          Name: Master
+        CoreInstanceGroup:
+          InstanceCount: 3
+          InstanceType: !Ref 'CoreInstanceType'
+          Market: ON_DEMAND
+          Name: Core
+        AdditionalMasterSecurityGroups: 
+          - !Ref 'WebAccessSecurityGroup'
+        TerminationProtected: false
+      EbsRootVolumeSize: 30
+      VisibleToAllUsers: true
+      JobFlowRole: !Ref 'EMRClusterinstanceProfile'
+      ReleaseLabel: !Ref 'ReleaseLabel'
+      #LogUri: 's3://emrclusterlogbucket/'
+      Name: !Ref 'EMRClusterNG1Capital'
+      AutoScalingRole: EMR_AutoScaling_DefaultRole
+      ServiceRole: !Ref 'EMRClusterServiceRole'
+  
+  EMRClusterServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - elasticmapreduce.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceRole
+      Path: /
+  
+  EMRClusterinstanceProfileRole:
+    Type: AWS::IAM::Role
+    DependsOn: 
+      - TesteEC2PolicyRole
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+      - PolicyName: "root"
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Resource: '*'
+              Action:
+                - cloudwatch:*
+                - dynamodb:*
+                - ec2:Describe*
+                - elasticmapreduce:Describe*
+                - elasticmapreduce:ListBootstrapActions
+                - elasticmapreduce:ListClusters
+                - elasticmapreduce:ListInstanceGroups
+                - elasticmapreduce:ListInstances
+                - elasticmapreduce:ListSteps
+                - kinesis:CreateStream
+                - kinesis:DeleteStream
+                - kinesis:DescribeStream
+                - kinesis:GetRecords
+                - kinesis:GetShardIterator
+                - kinesis:MergeShards
+                - kinesis:PutRecord
+                - kinesis:SplitShard
+                - rds:Describe*
+                - sdb:*
+                - sns:*
+                - sqs:*
+                - glue:CreateDatabase
+                - glue:UpdateDatabase
+                - glue:DeleteDatabase
+                - glue:GetDatabase
+                - glue:GetDatabases
+                - glue:CreateTable
+                - glue:UpdateTable
+                - glue:DeleteTable
+                - glue:GetTable
+                - glue:GetTables
+                - glue:GetTableVersions
+                - glue:CreatePartition
+                - glue:BatchCreatePartition
+                - glue:UpdatePartition
+                - glue:DeletePartition
+                - glue:BatchDeletePartition
+                - glue:GetPartition
+                - glue:GetPartitions
+                - glue:BatchGetPartition
+                - glue:CreateUserDefinedFunction
+                - glue:UpdateUserDefinedFunction
+                - glue:DeleteUserDefinedFunction
+                - glue:GetUserDefinedFunction
+                - glue:GetUserDefinedFunctions
+            - Effect: Allow
+              Action: 
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutObject
+              Resource:
+                - !Join ["", ['arn:aws:s3:::',!Ref TesteDataBucketName,'/',!Ref KeyName,'/']]
+                - !Join ["", ['arn:aws:s3:::',!Ref TesteDataBucketName,'/',!Ref KeyName,'/','*']]
+  
+  EMRClusterinstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'EMRClusterinstanceProfileRole'
+  
+  TesteEC2PolicyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  TesteEC2Policy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: TesteEC2Policy
+      PolicyDocument:
+        Statement:
+          - Effect: "Allow"
+            Action: 
+            - s3:ListBucket
+            - s3:GetObject
+            - s3:PutObject
+            Resource:
+              - !Join ["", ['arn:aws:s3:::',!Ref TesteDataBucketName,'/']]
+              - !Join ["", ['arn:aws:s3:::',!Ref TesteDataBucketName,'/','*']]
+      Roles: 
+        - !Ref TesteEC2PolicyRole
+
+Outputs:
+  EMRClusterSSH: 
+    Description: Terminal para linha de comando
+    Value: !Join ["", ["ssh -i ",!Ref KeyName, ".pem hadoop@", !GetAtt EMRCluster.MasterPublicDNS]]
+  
+  YARNResourceManager:
+    Description: Visualizacao Web do Yarn
+    Value: !Join ["", ['http://',!GetAtt EMRCluster.MasterPublicDNS,':8088']]
+
+  Zeppelin:
+    Description: Zeppelin
+    Value: !Join ["", ['http://',!GetAtt EMRCluster.MasterPublicDNS,':8890']]
+
+  SparkHistoryServer:
+    Description: Jobs Spark
+    Value: !Join ["", ['http://',!GetAtt EMRCluster.MasterPublicDNS,':18080']]
+  
+  Ganglia:
+    Description: Ganglia
+    Value: !Join ["", ['http://',!GetAtt EMRCluster.MasterPublicDNS,'/ganglia/']]
+
+
+
+
